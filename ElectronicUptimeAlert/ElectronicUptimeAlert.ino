@@ -424,7 +424,7 @@ void sendAlert() {
   int nextMin = getNextIntervalMinutes();
 
   String message = messageTemplate;
-  message.replace("{device}", "[" + deviceName + "]");
+  message.replace("{device}", deviceName);
   message.replace("{uptime}", uptimeStr);
   message.replace("{alert_number}", String(alertsSent + 1));
   message.replace("{time}", timestamp);
@@ -545,20 +545,36 @@ bool sendWhatsAppNotification(String message) {
 
   Serial.println("Sending WhatsApp...");
 
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(20000);
-
-  if (!client.connect("waservices.brahmayasa.com", 8000)) {
-    Serial.println("WA connect failed!");
-    return false;
-  }
-
   String postData = "sender=" + urlEncode(waSender) +
                     "&number=" + urlEncode(waGroup) +
                     "&is_group_target=1" +
                     "&message=" + urlEncode(message) +
                     "&token_auth=" + urlEncode(waToken);
+
+  Serial.println("WA POST len: " + String(postData.length()));
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(15000);
+  client.setBufferSizes(512, 512);
+
+  const char* host = "waservices.brahmayasa.com";
+  const uint16_t port = 8000;
+
+  IPAddress ip;
+  if (WiFi.hostByName(host, ip)) {
+    Serial.printf("DNS %s -> %s\n", host, ip.toString().c_str());
+  } else {
+    Serial.println("DNS lookup failed!");
+    return false;
+  }
+
+  Serial.printf("Connecting to %s (%s):%d ... ", host, ip.toString().c_str(), port);
+  if (!client.connect(ip, port)) {
+    Serial.println("Failed!");
+    return false;
+  }
+  Serial.println("Connected!");
 
   String httpReq = "POST /send-message HTTP/1.1\r\n";
   httpReq += "Host: waservices.brahmayasa.com:8000\r\n";
@@ -569,29 +585,33 @@ bool sendWhatsAppNotification(String message) {
 
   client.print(httpReq);
 
-  unsigned long timeout = millis() + 20000;
+  unsigned long timeout = millis() + 15000;
   bool success = false;
   String response = "";
   while (millis() < timeout) {
     while (client.available()) {
-      String line = client.readStringUntil('\n');
-      response += line + "\n";
-      if (line.startsWith("HTTP/")) {
-        int sp1 = line.indexOf(' ');
-        int sp2 = line.indexOf(' ', sp1 + 1);
-        if (sp1 > 0 && sp2 > sp1) {
-          int httpCode = line.substring(sp1 + 1, sp2).toInt();
-          Serial.printf("WA HTTP Response: %d\n", httpCode);
-          if (httpCode >= 200 && httpCode < 300) success = true;
-        }
-      }
+      char c = client.read();
+      response += c;
     }
-    if (success) break;
+    if (response.indexOf("HTTP/") >= 0 && response.indexOf("\r\n\r\n") >= 0) {
+      String statusLine = response.substring(0, response.indexOf("\r\n"));
+      Serial.println("WA Status: " + statusLine);
+      int sp1 = statusLine.indexOf(' ');
+      int sp2 = statusLine.indexOf(' ', sp1 + 1);
+      if (sp1 > 0 && sp2 > sp1) {
+        int httpCode = statusLine.substring(sp1 + 1, sp2).toInt();
+        if (httpCode >= 200 && httpCode < 300) success = true;
+      }
+      int bodyStart = response.indexOf("\r\n\r\n") + 4;
+      Serial.println("WA Body: " + response.substring(bodyStart));
+      break;
+    }
     delay(10);
   }
   client.stop();
-  Serial.println("WA Response:\n" + response);
-  return success;
+  if (success) return true;
+  Serial.println("WA request failed");
+  return false;
 }
 
 // ======================== UTILITY ========================
