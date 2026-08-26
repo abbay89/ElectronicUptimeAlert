@@ -519,6 +519,24 @@ bool sendTelegramNotification(String message) {
   return false;
 }
 
+String urlEncode(String str) {
+  String encoded = "";
+  char c;
+  for (unsigned int i = 0; i < str.length(); i++) {
+    c = str.charAt(i);
+    if (isAlphaNumeric(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      encoded += c;
+    } else if (c == ' ') {
+      encoded += '+';
+    } else {
+      encoded += '%';
+      if (c < 0x10) encoded += '0';
+      encoded += String(c, HEX);
+    }
+  }
+  return encoded;
+}
+
 bool sendWhatsAppNotification(String message) {
   if (waSender.length() == 0 || waGroup.length() == 0 || waToken.length() == 0) {
     Serial.println("WhatsApp credentials not set!");
@@ -527,24 +545,53 @@ bool sendWhatsAppNotification(String message) {
 
   Serial.println("Sending WhatsApp...");
 
-  HTTPClient http;
-  WiFiClient waClient;
-  http.begin(waClient, waUrl);
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  http.setTimeout(20000);
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(20000);
 
-  String postData = "sender=" + waSender + "&number=" + waGroup + "&is_group_target=1&message=" + message + "&token_auth=" + waToken;
-  int code = http.POST(postData);
-
-  if (code > 0) {
-    Serial.printf("WA Response: %d\n", code);
-    Serial.println(http.getString());
-    http.end();
-    return true;
+  if (!client.connect("waservices.brahmayasa.com", 8000)) {
+    Serial.println("WA connect failed!");
+    return false;
   }
-  Serial.printf("WA Error: %d\n", code);
-  http.end();
-  return false;
+
+  String postData = "sender=" + urlEncode(waSender) +
+                    "&number=" + urlEncode(waGroup) +
+                    "&is_group_target=1" +
+                    "&message=" + urlEncode(message) +
+                    "&token_auth=" + urlEncode(waToken);
+
+  String httpReq = "POST /send-message HTTP/1.1\r\n";
+  httpReq += "Host: waservices.brahmayasa.com:8000\r\n";
+  httpReq += "Content-Type: application/x-www-form-urlencoded\r\n";
+  httpReq += "Connection: close\r\n";
+  httpReq += "Content-Length: " + String(postData.length()) + "\r\n";
+  httpReq += "\r\n" + postData;
+
+  client.print(httpReq);
+
+  unsigned long timeout = millis() + 20000;
+  bool success = false;
+  String response = "";
+  while (millis() < timeout) {
+    while (client.available()) {
+      String line = client.readStringUntil('\n');
+      response += line + "\n";
+      if (line.startsWith("HTTP/")) {
+        int sp1 = line.indexOf(' ');
+        int sp2 = line.indexOf(' ', sp1 + 1);
+        if (sp1 > 0 && sp2 > sp1) {
+          int httpCode = line.substring(sp1 + 1, sp2).toInt();
+          Serial.printf("WA HTTP Response: %d\n", httpCode);
+          if (httpCode >= 200 && httpCode < 300) success = true;
+        }
+      }
+    }
+    if (success) break;
+    delay(10);
+  }
+  client.stop();
+  Serial.println("WA Response:\n" + response);
+  return success;
 }
 
 // ======================== UTILITY ========================
