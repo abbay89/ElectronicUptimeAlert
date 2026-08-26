@@ -2,14 +2,13 @@
 #define ENABLE_DATABASE
 
 #include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
 #include <WiFiClientSecure.h>
-#include <HTTPClient.h>
 #include <time.h>
 #include <ArduinoOTA.h>
 #include <ESP8266WebServer.h>
 #include <ArduinoJson.h>
 #include <FirebaseESP8266.h>
-#include <Ticker.h>
 
 // ======================== FIREBASE CONFIG ========================
 #define WEB_API_KEY "AIzaSyCwgPIXYmb1X265MAMnblvhuLH-F397HuY"
@@ -60,12 +59,12 @@ String waToken = "";
 String waUrl = "https://waservices.brahmayasa.com:8000/send-message";
 String telegramBotToken = "";
 String telegramChatID = "";
-int notificationMethod = 0;        // 0=WhatsApp, 1=Telegram
+int notificationMethod = 0;
 bool alertEnabled = true;
-int firstAlertMinutes = 30;        // First alert after 30 minutes
-String escalationIntervals = "20,15,10,5"; // Minutes between subsequent alerts
+int firstAlertMinutes = 30;
+String escalationIntervals = "20,15,10,5";
 String deviceName = "UptimeAlert";
-int heartbeatInterval = 60;        // seconds
+int heartbeatInterval = 60;
 bool alertOnPowerOn = false;
 bool restartRequest = false;
 
@@ -78,14 +77,13 @@ int currentEscalationIndex = 0;
 int currentIntervalMinutes = 0;
 bool firstAlertSent = false;
 unsigned long lastPollTime = 0;
-const unsigned long pollInterval = 10000; // 10 seconds
+const unsigned long pollInterval = 10000;
 
-// WiFi config polling variables
+// WiFi polling
 String pollWifiSsid = "";
 String pollWifiPass = "";
 bool pollRestartRequest = false;
 bool pollWifiSsidChanged = false;
-bool pollWifiPassChanged = false;
 
 // ======================== FIREBASE OBJECTS ========================
 FirebaseAuth auth;
@@ -98,11 +96,11 @@ ESP8266WebServer webServer(80);
 
 // ======================== NTP ========================
 const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 7 * 3600; // WIB (UTC+7)
+const long gmtOffset_sec = 7 * 3600;
 const int daylightOffset_sec = 0;
 
 // ======================== FORWARD DECLARATIONS ========================
-void streamCallback(FirebaseStreamsData data);
+void streamDataCallback(StreamData data);
 void streamTimeoutCallback(bool timeout);
 void loadConfigFromFirebase();
 void pollFirebase();
@@ -129,7 +127,6 @@ void setup() {
 
   bootTime = millis();
 
-  // Connect WiFi
   WiFi.mode(WIFI_STA);
   WiFi.hostname("uptime-alert-" + String(ESP.getChipId(), HEX));
   if (!connectToWiFi()) {
@@ -138,24 +135,21 @@ void setup() {
     ESP.restart();
   }
 
-  // NTP sync
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   Serial.println("Waiting for NTP sync...");
-  struct tm timeinfo;
   int retries = 0;
-  while (!getLocalTime(&timeinfo) && retries < 20) {
+  while (time(nullptr) < 100000 && retries < 40) {
     delay(500);
     Serial.print(".");
     retries++;
   }
   Serial.println();
 
-  // Firebase config
   config.api_key = WEB_API_KEY;
   auth.user.email = USER_EMAIL;
   auth.user.password = USER_PASS;
   config.database_url = DATABASE_URL;
-  config.timeout.server_response = 10 * 1000;
+  config.timeout.serverResponse = 10 * 1000;
 
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
@@ -171,10 +165,9 @@ void setup() {
   if (Firebase.ready()) {
     Serial.println("Firebase connected!");
 
+    Firebase.setStreamCallback(fbdo, streamDataCallback, streamTimeoutCallback);
     if (!Firebase.beginStream(fbdo, ROOT_PATH "/config")) {
       Serial.printf("Stream begin failed: %s\n", fbdo.errorReason().c_str());
-    } else {
-      Firebase.setStreamCallback(fbdo, streamCallback, streamTimeoutCallback);
     }
 
     loadConfigFromFirebase();
@@ -239,9 +232,9 @@ void loop() {
 }
 
 // ======================== FIREBASE STREAM ========================
-void streamCallback(FirebaseStreamsData data) {
+void streamDataCallback(StreamData data) {
   if (data.dataType() == "json") {
-    Serial.println("Stream data received:");
+    Serial.println("Stream data:");
     Serial.println(data.jsonString());
   }
 }
@@ -264,9 +257,7 @@ void loadConfigFromFirebase() {
   }
 
   Firebase.getString(fbdoRead, CFG_WIFI_PASS);
-  if (fbdoRead.stringData().length() > 0) {
-    pollWifiPass = fbdoRead.stringData();
-  }
+  if (fbdoRead.stringData().length() > 0) pollWifiPass = fbdoRead.stringData();
 
   Firebase.getString(fbdoRead, CFG_WA_SENDER);
   if (fbdoRead.stringData().length() > 0) waSender = fbdoRead.stringData();
@@ -327,13 +318,10 @@ void pollFirebase() {
   String newPass = fbdoRead.stringData();
   if (newPass.length() > 0 && newPass != pollWifiPass) {
     pollWifiPass = newPass;
-    pollWifiPassChanged = true;
   }
 
   Firebase.getBool(fbdoRead, CFG_RESTART);
-  if (fbdoRead.boolData()) {
-    pollRestartRequest = true;
-  }
+  if (fbdoRead.boolData()) pollRestartRequest = true;
 
   if (pollWifiSsidChanged && pollWifiSsid.length() > 0) {
     Serial.printf("Connecting to new WiFi: %s\n", pollWifiSsid.c_str());
@@ -352,11 +340,9 @@ void pollFirebase() {
     } else {
       Serial.println("\nFailed to connect to new WiFi");
       Firebase.setBool(fbdo, ROOT_PATH "/config/wifi_connect_result/success", false);
-      Firebase.setString(fbdo, ROOT_PATH "/config/wifi_connect_result/error", "Connection timeout");
     }
     Firebase.setBool(fbdo, CFG_RESTART, false);
     pollWifiSsidChanged = false;
-    pollWifiPassChanged = false;
   }
 
   if (pollRestartRequest) {
@@ -447,11 +433,9 @@ void sendAlert() {
     alertsSent++;
     lastAlertTime = millis();
     firstAlertSent = true;
-
     Firebase.setInt(fbdo, STS_ALERTS_SENT, alertsSent);
     Firebase.setString(fbdo, STS_LAST_ALERT, timestamp);
-
-    Serial.printf("Alert sent successfully! Total: %d\n", alertsSent);
+    Serial.printf("Alert sent! Total: %d\n", alertsSent);
   } else {
     Serial.println("Alert send FAILED");
   }
@@ -459,9 +443,7 @@ void sendAlert() {
 
 // ======================== NOTIFICATION ========================
 bool sendNotification(String message) {
-  if (notificationMethod == 1) {
-    return sendTelegramNotification(message);
-  }
+  if (notificationMethod == 1) return sendTelegramNotification(message);
   return sendWhatsAppNotification(message);
 }
 
@@ -471,7 +453,7 @@ bool sendTelegramNotification(String message) {
     return false;
   }
 
-  Serial.println("Sending Telegram notification...");
+  Serial.println("Sending Telegram...");
 
   WiFiClientSecure client;
   client.setInsecure();
@@ -485,7 +467,6 @@ bool sendTelegramNotification(String message) {
   StaticJsonDocument<512> doc;
   doc["chat_id"] = telegramChatID;
   doc["text"] = message;
-  doc["parse_mode"] = "HTML";
   String payload;
   serializeJson(doc, payload);
 
@@ -493,17 +474,14 @@ bool sendTelegramNotification(String message) {
   for (int i = 0; i < 3; i++) {
     Serial.printf("Trying %s:443... ", hosts[i].c_str());
     if (client.connect(hosts[i].c_str(), 443)) {
-      Serial.println("Connected!");
+      String httpReq = "POST /bot" + telegramBotToken + "/sendMessage HTTP/1.1\r\n";
+      httpReq += "Host: api.telegram.org\r\n";
+      httpReq += "Content-Type: application/json\r\n";
+      httpReq += "Connection: close\r\n";
+      httpReq += "Content-Length: " + String(payload.length()) + "\r\n";
+      httpReq += "\r\n" + payload;
 
-      String httpRequest = "POST /bot" + telegramBotToken + "/sendMessage HTTP/1.1\r\n";
-      httpRequest += "Host: api.telegram.org\r\n";
-      httpRequest += "Content-Type: application/json\r\n";
-      httpRequest += "Connection: close\r\n";
-      httpRequest += "Content-Length: " + String(payload.length()) + "\r\n";
-      httpRequest += "\r\n";
-      httpRequest += payload;
-
-      client.print(httpRequest);
+      client.print(httpReq);
 
       unsigned long timeout = millis() + 10000;
       bool success = false;
@@ -511,14 +489,11 @@ bool sendTelegramNotification(String message) {
         if (client.available()) {
           String line = client.readStringUntil('\n');
           if (line.startsWith("HTTP/")) {
-            int space1 = line.indexOf(' ');
-            int space2 = line.indexOf(' ', space1 + 1);
-            if (space1 > 0 && space2 > space1) {
-              int httpCode = line.substring(space1 + 1, space2).toInt();
-              if (httpCode == 200) {
-                success = true;
-                Serial.println("Telegram sent!");
-              }
+            int sp1 = line.indexOf(' ');
+            int sp2 = line.indexOf(' ', sp1 + 1);
+            if (sp1 > 0 && sp2 > sp1) {
+              int code = line.substring(sp1 + 1, sp2).toInt();
+              if (code == 200) { success = true; Serial.println("Sent!"); }
             }
           }
           if (success) break;
@@ -531,7 +506,6 @@ bool sendTelegramNotification(String message) {
     }
     delay(100);
   }
-
   Serial.println("All Telegram hosts failed!");
   return false;
 }
@@ -542,67 +516,59 @@ bool sendWhatsAppNotification(String message) {
     return false;
   }
 
-  Serial.println("Sending WhatsApp notification...");
+  Serial.println("Sending WhatsApp...");
 
   HTTPClient http;
-  http.begin(waUrl);
+  WiFiClient waClient;
+  http.begin(waClient, waUrl);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   http.setTimeout(20000);
 
   String postData = "sender=" + waSender + "&number=" + waGroup + "&is_group_target=1&message=" + message + "&token_auth=" + waToken;
+  int code = http.POST(postData);
 
-  int httpResponseCode = http.POST(postData);
-
-  if (httpResponseCode > 0) {
-    Serial.printf("WA HTTP Response: %d\n", httpResponseCode);
-    String response = http.getString();
-    Serial.println(response);
+  if (code > 0) {
+    Serial.printf("WA Response: %d\n", code);
+    Serial.println(http.getString());
     http.end();
-    Serial.println("WhatsApp sent!");
     return true;
-  } else {
-    Serial.printf("WA Error: %d\n", httpResponseCode);
-    http.end();
-    return false;
   }
+  Serial.printf("WA Error: %d\n", code);
+  http.end();
+  return false;
 }
 
 // ======================== UTILITY ========================
 String formatUptime(unsigned long seconds) {
-  unsigned long days = seconds / 86400;
-  unsigned long hours = (seconds % 86400) / 3600;
-  unsigned long minutes = (seconds % 3600) / 60;
-  unsigned long secs = seconds % 60;
-
-  String result = "";
-  if (days > 0) result += String(days) + "d ";
-  result += String(hours) + "h ";
-  result += String(minutes) + "m ";
-  result += String(secs) + "s";
-  return result;
+  unsigned long d = seconds / 86400;
+  unsigned long h = (seconds % 86400) / 3600;
+  unsigned long m = (seconds % 3600) / 60;
+  unsigned long s = seconds % 60;
+  String r = "";
+  if (d > 0) r += String(d) + "d ";
+  r += String(h) + "h " + String(m) + "m " + String(s) + "s";
+  return r;
 }
 
 String getTimestamp() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    return "NTP not synced";
-  }
+  time_t now = time(nullptr);
+  if (now < 100000) return "NTP not synced";
+  struct tm* t = localtime(&now);
   char buf[30];
-  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", t);
   return String(buf);
 }
 
 // ======================== FIREBASE WRITES ========================
 void writeBootStatus() {
-  String timestamp = getTimestamp();
-  Firebase.setString(fbdo, STS_LAST_BOOT, timestamp);
-  Firebase.setString(fbdo, STS_HEARTBEAT, timestamp);
+  String ts = getTimestamp();
+  Firebase.setString(fbdo, STS_LAST_BOOT, ts);
+  Firebase.setString(fbdo, STS_HEARTBEAT, ts);
   Firebase.setBool(fbdo, STS_IS_ONLINE, true);
   if (WiFi.status() == WL_CONNECTED) {
     Firebase.setString(fbdo, STS_WIFI_SSID, WiFi.SSID());
     Firebase.setInt(fbdo, STS_WIFI_RSSI, WiFi.RSSI());
   }
-
   if (pollWifiSsid.length() == 0) {
     Firebase.setString(fbdo, CFG_WIFI_SSID, DEFAULT_WIFI_SSID[0]);
   }
@@ -613,13 +579,11 @@ void writeBootStatus() {
   Firebase.setString(fbdo, CFG_ESCALATION, escalationIntervals);
   Firebase.setBool(fbdo, CFG_ALERT_ENABLED, alertEnabled);
   Firebase.setInt(fbdo, CFG_NOTIFY_METHOD, notificationMethod);
-
   Serial.println("Boot status written to Firebase");
 }
 
 void writeHeartbeat() {
-  String timestamp = getTimestamp();
-  Firebase.setString(fbdo, STS_HEARTBEAT, timestamp);
+  Firebase.setString(fbdo, STS_HEARTBEAT, getTimestamp());
   Firebase.setBool(fbdo, STS_IS_ONLINE, true);
   if (WiFi.status() == WL_CONNECTED) {
     Firebase.setInt(fbdo, STS_WIFI_RSSI, WiFi.RSSI());
@@ -633,14 +597,12 @@ bool connectToWiFi() {
   if (pollWifiSsid.length() > 0) {
     Serial.printf("Trying Firebase SSID: %s\n", pollWifiSsid.c_str());
     WiFi.begin(pollWifiSsid.c_str(), pollWifiPass.c_str());
-    unsigned long startTime = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - startTime < 20000) {
-      delay(500);
-      Serial.print(".");
+    unsigned long t = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t < 20000) {
+      delay(500); Serial.print(".");
     }
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("\nConnected to %s!\n", pollWifiSsid.c_str());
-      Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+      Serial.printf("\nConnected to %s! IP: %s\n", pollWifiSsid.c_str(), WiFi.localIP().toString().c_str());
       return true;
     }
     Serial.println("\nFirebase WiFi failed");
@@ -649,19 +611,16 @@ bool connectToWiFi() {
   for (int i = 0; i < DEFAULT_WIFI_COUNT; i++) {
     Serial.printf("Trying: %s\n", DEFAULT_WIFI_SSID[i]);
     WiFi.begin(DEFAULT_WIFI_SSID[i], DEFAULT_WIFI_PASS[i]);
-    unsigned long startTime = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - startTime < 20000) {
-      delay(500);
-      Serial.print(".");
+    unsigned long t = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t < 20000) {
+      delay(500); Serial.print(".");
     }
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("\nConnected to %s!\n", DEFAULT_WIFI_SSID[i]);
-      Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+      Serial.printf("\nConnected to %s! IP: %s\n", DEFAULT_WIFI_SSID[i], WiFi.localIP().toString().c_str());
       return true;
     }
     Serial.println("\nFailed");
   }
-
   return false;
 }
 
@@ -669,20 +628,10 @@ bool connectToWiFi() {
 void setupOTA() {
   ArduinoOTA.setHostname(("uptime-alert-" + String(ESP.getChipId(), HEX)).c_str());
   ArduinoOTA.setPassword("uptime123");
-
-  ArduinoOTA.onStart([]() {
-    Serial.println("OTA Update Starting...");
-  });
-  ArduinoOTA.onEnd([]() {
-    Serial.println("\nOTA Update Complete!");
-  });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("OTA Progress: %u%%\r", (progress / (total / 100)));
-  });
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("OTA Error[%u]: ", error);
-  });
-
+  ArduinoOTA.onStart([]() { Serial.println("OTA Starting..."); });
+  ArduinoOTA.onEnd([]() { Serial.println("\nOTA Complete!"); });
+  ArduinoOTA.onProgress([](unsigned int p, unsigned int t) { Serial.printf("OTA: %u%%\r", (p / (t / 100))); });
+  ArduinoOTA.onError([](ota_error_t e) { Serial.printf("OTA Error[%u]: ", e); });
   ArduinoOTA.begin();
   Serial.println("OTA ready");
 }
@@ -690,45 +639,39 @@ void setupOTA() {
 // ======================== WEB SERVER ========================
 void handleRoot() {
   String html = "<!DOCTYPE html><html><head>";
-  html += "<meta charset='UTF-8'>";
-  html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+  html += "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
   html += "<title>" + deviceName + " Control</title>";
   html += "<style>";
-  html += "body{font-family:Arial;background:#0f172a;color:#e2e8f0;margin:0;padding:20px;}";
-  html += ".card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;margin:10px 0;}";
-  html += "h1{color:#38bdf8;text-align:center;}";
-  html += ".status{font-size:24px;color:#22c55e;text-align:center;margin:10px 0;}";
-  html += "button{background:#0ea5e9;color:white;border:none;padding:12px 24px;border-radius:8px;cursor:pointer;font-size:16px;width:100%;margin:5px 0;}";
-  html += "button:hover{background:#0284c7;}";
-  html += "button.danger{background:#ef4444;}";
-  html += "button.danger:hover{background:#dc2626;}";
-  html += "table{width:100%;border-collapse:collapse;}";
-  html += "td{padding:8px;border-bottom:1px solid #334155;}";
-  html += "td:first-child{color:#94a3b8;width:40%;}";
+  html += "body{font-family:Arial;background:#0f172a;color:#e2e8f0;margin:0;padding:20px}";
+  html += ".c{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;margin:10px 0}";
+  html += "h1{color:#38bdf8;text-align:center}";
+  html += ".s{font-size:24px;color:#22c55e;text-align:center;margin:10px 0}";
+  html += "button{background:#0ea5e9;color:#fff;border:none;padding:12px;border-radius:8px;cursor:pointer;font-size:16px;width:100%;margin:5px 0}";
+  html += "button:hover{background:#0284c7}";
+  html += "button.d{background:#ef4444}";
+  html += "table{width:100%;border-collapse:collapse}";
+  html += "td{padding:8px;border-bottom:1px solid #334155}";
+  html += "td:first-child{color:#94a3b8;width:40%}";
   html += "</style></head><body>";
   html += "<h1>" + deviceName + "</h1>";
-  html += "<div class='card'><div class='status'>UPTIME: " + formatUptime((millis() - bootTime) / 1000) + "</div></div>";
-  html += "<div class='card'><table>";
+  html += "<div class='c'><div class='s'>UPTIME: " + formatUptime((millis() - bootTime) / 1000) + "</div></div>";
+  html += "<div class='c'><table>";
   html += "<tr><td>Status</td><td>" + String(Firebase.ready() ? "Online" : "Offline") + "</td></tr>";
   html += "<tr><td>WiFi</td><td>" + WiFi.SSID() + " (" + String(WiFi.RSSI()) + " dBm)</td></tr>";
   html += "<tr><td>IP</td><td>" + WiFi.localIP().toString() + "</td></tr>";
   html += "<tr><td>Alerts Sent</td><td>" + String(alertsSent) + "</td></tr>";
-  html += "<tr><td>First Alert</td><td>After " + String(firstAlertMinutes) + " minutes</td></tr>";
+  html += "<tr><td>First Alert</td><td>After " + String(firstAlertMinutes) + " min</td></tr>";
   html += "<tr><td>Escalation</td><td>" + escalationIntervals + " min</td></tr>";
   html += "<tr><td>Next Alert In</td><td>" + String(currentIntervalMinutes) + " min</td></tr>";
   html += "</table></div>";
-  html += "<div class='card'>";
-  html += "<form action='/restart' method='POST'>";
-  html += "<button class='danger'>Restart Device</button>";
-  html += "</form></div>";
-  html += "<p style='text-align:center;color:#64748b;font-size:12px;'>Use dashboard to configure all settings</p>";
+  html += "<div class='c'><form action='/restart' method='POST'><button class='d'>Restart Device</button></form></div>";
+  html += "<p style='text-align:center;color:#64748b;font-size:12px'>Use dashboard to configure all settings</p>";
   html += "</body></html>";
-
   webServer.send(200, "text/html", html);
 }
 
 void handleRestart() {
-  webServer.send(200, "text/html", "<html><body style='background:#0f172a;color:#e2e8f0;font-family:Arial;text-align:center;padding:50px;'><h1>Restarting...</h1><p>Device will reboot in 3 seconds.</p></body></html>");
+  webServer.send(200, "text/html", "<html><body style='background:#0f172a;color:#e2e8f0;text-align:center;padding:50px'><h1>Restarting...</h1></body></html>");
   delay(3000);
   ESP.restart();
 }
