@@ -102,9 +102,9 @@ const long gmtOffset_sec = 7 * 3600; // WIB (UTC+7)
 const int daylightOffset_sec = 0;
 
 // ======================== FORWARD DECLARATIONS ========================
-void processData(FirebaseStreamsData &data);
 void streamCallback(FirebaseStreamsData data);
 void streamTimeoutCallback(bool timeout);
+void loadConfigFromFirebase();
 void pollFirebase();
 void checkAlerts();
 void sendAlert();
@@ -118,6 +118,8 @@ bool connectToWiFi();
 void setupOTA();
 void handleRoot();
 void handleRestart();
+void writeBootStatus();
+void writeHeartbeat();
 
 // ======================== SETUP ========================
 void setup() {
@@ -169,26 +171,20 @@ void setup() {
   if (Firebase.ready()) {
     Serial.println("Firebase connected!");
 
-    // Start streaming for config changes and restart request
     if (!Firebase.beginStream(fbdo, ROOT_PATH "/config")) {
       Serial.printf("Stream begin failed: %s\n", fbdo.errorReason().c_str());
     } else {
       Firebase.setStreamCallback(fbdo, streamCallback, streamTimeoutCallback);
     }
 
-    // Load config from Firebase
     loadConfigFromFirebase();
-
-    // Write initial status
     writeBootStatus();
   } else {
     Serial.println("Firebase auth failed, running with defaults");
   }
 
-  // Setup OTA
   setupOTA();
 
-  // Web server
   webServer.on("/", handleRoot);
   webServer.on("/restart", HTTP_POST, handleRestart);
   webServer.begin();
@@ -204,11 +200,10 @@ void setup() {
 // ======================== MAIN LOOP ========================
 void loop() {
   ArduinoOTA.handle();
-  webServer.handleHandle();
+  webServer.handleClient();
 
   unsigned long now = millis();
 
-  // Poll Firebase config every 10 seconds
   if (now - lastPollTime >= pollInterval) {
     lastPollTime = now;
     if (Firebase.ready()) {
@@ -216,25 +211,21 @@ void loop() {
     }
   }
 
-  // Heartbeat to Firebase
   if (Firebase.ready() && (now - lastHeartbeat >= (unsigned long)heartbeatInterval * 1000)) {
     lastHeartbeat = now;
     writeHeartbeat();
   }
 
-  // Check for alerts
   if (alertEnabled && Firebase.ready()) {
     checkAlerts();
   }
 
-  // Handle restart request
   if (restartRequest) {
     Serial.println("Restart requested from dashboard!");
     delay(500);
     ESP.restart();
   }
 
-  // Handle WiFi reconnect
   static unsigned long lastWifiCheck = 0;
   if (now - lastWifiCheck >= 30000) {
     lastWifiCheck = now;
@@ -324,7 +315,6 @@ void loadConfigFromFirebase() {
 
 // ======================== POLL FIREBASE ========================
 void pollFirebase() {
-  // Read config values
   Firebase.getString(fbdoRead, CFG_WIFI_SSID);
   String newSsid = fbdoRead.stringData();
   if (newSsid.length() > 0 && newSsid != pollWifiSsid) {
@@ -345,7 +335,6 @@ void pollFirebase() {
     pollRestartRequest = true;
   }
 
-  // Handle WiFi change
   if (pollWifiSsidChanged && pollWifiSsid.length() > 0) {
     Serial.printf("Connecting to new WiFi: %s\n", pollWifiSsid.c_str());
     WiFi.disconnect();
@@ -376,7 +365,6 @@ void pollFirebase() {
     ESP.restart();
   }
 
-  // Update WiFi RSSI
   if (WiFi.status() == WL_CONNECTED) {
     Firebase.setInt(fbdo, STS_WIFI_RSSI, WiFi.RSSI());
   }
@@ -386,16 +374,14 @@ void pollFirebase() {
 void checkAlerts() {
   unsigned long uptimeSeconds = (millis() - bootTime) / 1000;
 
-  // Write uptime to Firebase
   static unsigned long lastUptimeWrite = 0;
-  if (millis() - lastUptimeWrite >= 10000) { // Every 10 seconds
+  if (millis() - lastUptimeWrite >= 10000) {
     lastUptimeWrite = millis();
     Firebase.setInt(fbdo, STS_UPTIME, uptimeSeconds);
   }
 
   unsigned long uptimeMinutes = uptimeSeconds / 60;
 
-  // First alert
   if (!firstAlertSent && uptimeMinutes >= (unsigned long)firstAlertMinutes) {
     firstAlertSent = true;
     currentEscalationIndex = 0;
@@ -405,7 +391,6 @@ void checkAlerts() {
     return;
   }
 
-  // Escalation alerts
   if (firstAlertSent && currentIntervalMinutes > 0) {
     unsigned long timeSinceLastAlert = (millis() - lastAlertTime) / 1000 / 60;
     if (timeSinceLastAlert >= (unsigned long)currentIntervalMinutes) {
@@ -418,11 +403,9 @@ void checkAlerts() {
 }
 
 int getNextIntervalMinutes() {
-  // Parse escalation intervals
   int intervals[10];
   int count = 0;
 
-  // Parse comma-separated values
   String temp = escalationIntervals;
   while (temp.length() > 0 && count < 10) {
     int commaIdx = temp.indexOf(',');
@@ -435,12 +418,11 @@ int getNextIntervalMinutes() {
     }
   }
 
-  if (count == 0) return 5; // Default minimum
+  if (count == 0) return 5;
 
   if (currentEscalationIndex < count) {
     return intervals[currentEscalationIndex];
   }
-  // After all intervals, use the last one
   return intervals[count - 1];
 }
 
@@ -495,13 +477,11 @@ bool sendTelegramNotification(String message) {
   client.setInsecure();
   client.setTimeout(10000);
 
-  // Resolve DNS
   IPAddress ip;
   if (WiFi.hostByName("api.telegram.org", ip)) {
     Serial.printf("api.telegram.org -> %s\n", ip.toString().c_str());
   }
 
-  // Build JSON payload
   StaticJsonDocument<512> doc;
   doc["chat_id"] = telegramChatID;
   doc["text"] = message;
@@ -509,7 +489,6 @@ bool sendTelegramNotification(String message) {
   String payload;
   serializeJson(doc, payload);
 
-  // Try multiple hosts
   String hosts[] = {"api.telegram.org", "149.154.166.110", "149.154.167.220"};
   for (int i = 0; i < 3; i++) {
     Serial.printf("Trying %s:443... ", hosts[i].c_str());
@@ -624,7 +603,6 @@ void writeBootStatus() {
     Firebase.setInt(fbdo, STS_WIFI_RSSI, WiFi.RSSI());
   }
 
-  // Write config defaults if not set
   if (pollWifiSsid.length() == 0) {
     Firebase.setString(fbdo, CFG_WIFI_SSID, DEFAULT_WIFI_SSID[0]);
   }
@@ -652,7 +630,6 @@ void writeHeartbeat() {
 bool connectToWiFi() {
   Serial.println("Connecting to WiFi...");
 
-  // Try Firebase-configured WiFi first
   if (pollWifiSsid.length() > 0) {
     Serial.printf("Trying Firebase SSID: %s\n", pollWifiSsid.c_str());
     WiFi.begin(pollWifiSsid.c_str(), pollWifiPass.c_str());
@@ -669,7 +646,6 @@ bool connectToWiFi() {
     Serial.println("\nFirebase WiFi failed");
   }
 
-  // Try defaults
   for (int i = 0; i < DEFAULT_WIFI_COUNT; i++) {
     Serial.printf("Trying: %s\n", DEFAULT_WIFI_SSID[i]);
     WiFi.begin(DEFAULT_WIFI_SSID[i], DEFAULT_WIFI_PASS[i]);
