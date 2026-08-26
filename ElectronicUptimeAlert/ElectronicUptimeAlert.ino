@@ -50,8 +50,8 @@
 #define STS_CURRENT_INTERVAL ROOT_PATH "/status/current_interval_minutes"
 
 // ======================== DEFAULT CONFIG ========================
-const char* DEFAULT_WIFI_SSID[] = {"YOUR_WIFI_SSID"};
-const char* DEFAULT_WIFI_PASS[] = {"YOUR_WIFI_PASSWORD"};
+const char* DEFAULT_WIFI_SSID[] = {"iconnet"};
+const char* DEFAULT_WIFI_PASS[] = {"BlackPanther"};
 const int DEFAULT_WIFI_COUNT = 1;
 
 String waSender = "";
