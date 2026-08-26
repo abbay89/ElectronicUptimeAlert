@@ -13,8 +13,8 @@
 // ======================== FIREBASE CONFIG ========================
 #define WEB_API_KEY "AIzaSyCwgPIXYmb1X265MAMnblvhuLH-F397HuY"
 #define DATABASE_URL "https://thiefdetectorapp-default-rtdb.asia-southeast1.firebasedatabase.app"
-#define USER_EMAIL "YOUR_FIREBASE_EMAIL"
-#define USER_PASS "YOUR_FIREBASE_PASSWORD"
+#define USER_EMAIL "abbay89@gmail.com"
+#define USER_PASS "Pangeran89"
 
 // Firebase root path (separate from ThiefAlarm)
 #define ROOT_PATH "uptimeAlert"
@@ -35,6 +35,7 @@
 #define CFG_DEVICE_NAME   ROOT_PATH "/config/device_name"
 #define CFG_HEARTBEAT_INT ROOT_PATH "/config/heartbeat_interval"
 #define CFG_ALERT_ON_BOOT ROOT_PATH "/config/alert_on_power_on"
+#define CFG_MSG_TEMPLATE  ROOT_PATH "/config/message_template"
 #define CFG_RESTART       ROOT_PATH "/config/restart_request"
 
 // Status paths
@@ -49,21 +50,22 @@
 #define STS_CURRENT_INTERVAL ROOT_PATH "/status/current_interval_minutes"
 
 // ======================== DEFAULT CONFIG ========================
-const char* DEFAULT_WIFI_SSID[] = {"iconnet"};
-const char* DEFAULT_WIFI_PASS[] = {"BlackPanther"};
-const int DEFAULT_WIFI_COUNT = 1;
+const char* DEFAULT_WIFI_SSID[] = {"Iconnet Baru_4G", "BlackPanther"};
+const char* DEFAULT_WIFI_PASS[] = {"30062019", "iniDiaPasswordnyaYah"};
+const int DEFAULT_WIFI_COUNT = 2;
 
-String waSender = "";
-String waGroup = "";
-String waToken = "";
+String waSender = "6285883080713";
+String waGroup = "HomeGroup";
+String waToken = "xGNOOvspX5ejzi6D";
 String waUrl = "https://waservices.brahmayasa.com:8000/send-message";
-String telegramBotToken = "";
-String telegramChatID = "";
+String telegramBotToken = "8216163103:AAEZqACDFJKcgLqn4flSB7D6WNaTvFZFs7c";
+String telegramChatID = "-5502704120";
 int notificationMethod = 0;
 bool alertEnabled = true;
 int firstAlertMinutes = 30;
 String escalationIntervals = "20,15,10,5";
 String deviceName = "UptimeAlert";
+String messageTemplate = "[{device}] Uptime Alert!\nDevice has been running for: {uptime}\nAlert #{alert_number}\nTime: {time}\nNext alert in: {next_alert} minutes";
 int heartbeatInterval = 60;
 bool alertOnPowerOn = false;
 bool restartRequest = false;
@@ -292,6 +294,9 @@ void loadConfigFromFirebase() {
   Firebase.getString(fbdoRead, CFG_DEVICE_NAME);
   if (fbdoRead.stringData().length() > 0) deviceName = fbdoRead.stringData();
 
+  Firebase.getString(fbdoRead, CFG_MSG_TEMPLATE);
+  if (fbdoRead.stringData().length() > 0) messageTemplate = fbdoRead.stringData();
+
   Firebase.getInt(fbdoRead, CFG_HEARTBEAT_INT);
   if (fbdoRead.intData() > 0) heartbeatInterval = fbdoRead.intData();
 
@@ -416,12 +421,16 @@ void sendAlert() {
   unsigned long uptimeSeconds = (millis() - bootTime) / 1000;
   String uptimeStr = formatUptime(uptimeSeconds);
   String timestamp = getTimestamp();
+  int nextMin = getNextIntervalMinutes();
 
-  String message = "[" + deviceName + "] Uptime Alert!\n";
-  message += "Device has been running for: " + uptimeStr + "\n";
-  message += "Alert #" + String(alertsSent + 1) + "\n";
-  message += "Time: " + timestamp + "\n";
-  message += "Next alert in: " + String(getNextIntervalMinutes()) + " minutes";
+  String message = messageTemplate;
+  message.replace("{device}", "[" + deviceName + "]");
+  message.replace("{uptime}", uptimeStr);
+  message.replace("{alert_number}", String(alertsSent + 1));
+  message.replace("{time}", timestamp);
+  message.replace("{next_alert}", String(nextMin));
+  message.replace("{escalation}", escalationIntervals);
+  message.replace("{first_alert}", String(firstAlertMinutes));
 
   Serial.println("=== SENDING ALERT ===");
   Serial.println(message);
@@ -579,6 +588,7 @@ void writeBootStatus() {
   Firebase.setString(fbdo, CFG_ESCALATION, escalationIntervals);
   Firebase.setBool(fbdo, CFG_ALERT_ENABLED, alertEnabled);
   Firebase.setInt(fbdo, CFG_NOTIFY_METHOD, notificationMethod);
+  Firebase.setString(fbdo, CFG_MSG_TEMPLATE, messageTemplate);
   Serial.println("Boot status written to Firebase");
 }
 

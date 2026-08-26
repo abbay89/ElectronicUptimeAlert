@@ -95,6 +95,12 @@ h1{margin:28px 0 4px;font-size:clamp(1.2rem,4vw,1.7rem);font-weight:700;text-ali
 <div class="fg"><label>Heartbeat Interval (sec)</label><input type="number" id="cfgHeartbeat" min="10" max="3600" value="60"/></div>
 <div class="fg"><label>Alert on Power On</label><select id="cfgAlertOnBoot"><option value="false">No</option><option value="true">Yes</option></select></div>
 </div>
+<div class="fg"><label>Notification Message Template</label><textarea id="cfgMsgTemplate" rows="5" style="width:100%;padding:10px;font-size:.9rem;border-radius:8px;border:1.5px solid #334155;background:#0b1220;color:#e2e8f0;font-family:monospace">[{device}] Uptime Alert!
+Device has been running for: {uptime}
+Alert #{alert_number}
+Time: {time}
+Next alert in: {next_alert} minutes</textarea>
+<p style="color:#94a3b8;font-size:.75rem;margin:4px 0 0">Placeholders: {device} {uptime} {alert_number} {time} {next_alert} {escalation} {first_alert}</p></div>
 <button class="btn btn-p" onclick="saveAlertConfig()">Save Alert Config</button></div>
 <div class="card"><h3>Telegram Settings</h3>
 <div class="fg"><label>Bot Token</label><input type="text" id="cfgTgToken" placeholder="123456:ABC-DEF..."/></div>
@@ -186,6 +192,7 @@ setV("cfgWaToken",c.wa_token);
 setV("cfgWaUrl",c.wa_url);
 setV("cfgWifiSsid",c.wifi_ssid);
 setV("cfgWifiPass",c.wifi_pass);
+setV("cfgMsgTemplate",c.message_template);
 });
 
 if(intervalId)clearInterval(intervalId);
@@ -202,7 +209,7 @@ function sel(id,v){const e=document.getElementById(id);if(e&&v!==undefined&&v!==
 function loadCfg(k){try{return JSON.parse(document.getElementById("cfgDeviceName").value)}catch(e){return null}}
 
 function saveAlertConfig(){
-const updates={alert_enabled:document.getElementById("cfgAlertEnabled").value==="true",notification_method:parseInt(document.getElementById("cfgNotifyMethod").value),first_alert_minutes:parseInt(document.getElementById("cfgFirstAlert").value),escalation_intervals:document.getElementById("cfgEscalation").value,device_name:document.getElementById("cfgDeviceName").value,heartbeat_interval:parseInt(document.getElementById("cfgHeartbeat").value),alert_on_power_on:document.getElementById("cfgAlertOnBoot").value==="true"};
+const updates={alert_enabled:document.getElementById("cfgAlertEnabled").value==="true",notification_method:parseInt(document.getElementById("cfgNotifyMethod").value),first_alert_minutes:parseInt(document.getElementById("cfgFirstAlert").value),escalation_intervals:document.getElementById("cfgEscalation").value,device_name:document.getElementById("cfgDeviceName").value,heartbeat_interval:parseInt(document.getElementById("cfgHeartbeat").value),alert_on_power_on:document.getElementById("cfgAlertOnBoot").value==="true",message_template:document.getElementById("cfgMsgTemplate").value};
 db.ref(R+"/config").update(updates).then(()=>alert("Alert config saved!")).catch(e=>alert("Error: "+e.message));
 }
 function saveTelegramConfig(){
