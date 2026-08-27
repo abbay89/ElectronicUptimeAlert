@@ -102,22 +102,6 @@ Time: {time}
 Next alert in: {next_alert} minutes</textarea>
 <p style="color:#94a3b8;font-size:.75rem;margin:4px 0 0">Placeholders: {device} {uptime} {alert_number} {time} {next_alert} {escalation} {first_alert}</p></div>
 <button class="btn btn-p" onclick="saveAlertConfig()">Save Alert Config</button></div>
-<div class="card"><h3>Telegram Settings</h3>
-<div class="fg"><label>Bot Token</label><input type="text" id="cfgTgToken" placeholder="123456:ABC-DEF..."/></div>
-<div class="fg"><label>Chat ID</label><input type="text" id="cfgTgChatId" placeholder="-1001234567890"/></div>
-<button class="btn btn-p" onclick="saveTelegramConfig()">Save Telegram Config</button></div>
-<div class="card"><h3>WhatsApp Settings</h3>
-<div class="fg"><label>API URL</label><input type="text" id="cfgWaUrl" value="https://waservices.brahmayasa.com:8000/send-message"/></div>
-<div class="crow">
-<div class="fg"><label>Sender</label><input type="text" id="cfgWaSender" placeholder="Sender ID"/></div>
-<div class="fg"><label>Group/Number</label><input type="text" id="cfgWaGroup" placeholder="628xxxxxxxxxx"/></div>
-</div>
-<div class="fg"><label>Auth Token</label><input type="password" id="cfgWaToken" placeholder="token_auth"/></div>
-<button class="btn btn-p" onclick="saveWhatsAppConfig()">Save WhatsApp Config</button></div>
-<div class="card"><h3>WiFi Configuration</h3>
-<div class="fg"><label>WiFi SSID</label><input type="text" id="cfgWifiSsid" placeholder="Network name"/></div>
-<div class="fg"><label>WiFi Password</label><input type="password" id="cfgWifiPass" placeholder="Password"/></div>
-<button class="btn btn-p" onclick="saveWifiConfig()">Save &amp; Connect WiFi</button></div>
 <div class="card"><h3>Device Actions</h3>
 <button class="btn btn-d" onclick="restartDevice()">Restart Device</button></div>
 <div class="card"><h3>Logs</h3>
@@ -126,12 +110,7 @@ Next alert in: {next_alert} minutes</textarea>
 <button class="sbtn" onclick="toggleSettings()">&#9881;</button>
 <div class="spanel" id="settingsPanel">
 <h3>Firebase Settings</h3>
-<div class="fg"><label>API Key</label><input type="text" id="fbApiKey"/></div>
-<div class="fg"><label>Database URL</label><input type="text" id="fbDbUrl"/></div>
-<div class="fg"><label>Project ID</label><input type="text" id="fbProjectId"/></div>
-<div class="fg"><label>Auth Email</label><input type="text" id="fbEmail"/></div>
-<div class="fg"><label>Auth Password</label><input type="password" id="fbPassword"/></div>
-<button class="btn btn-s" onclick="saveFirebaseConfig()">Save Firebase Config</button>
+<p style="color:#94a3b8;font-size:.85rem;margin:10px 0">Firebase settings are hardcoded in device firmware.</p>
 <hr style="border-color:var(--bdr);margin:20px 0"/>
 <button class="btn btn-d" onclick="doLogout()">Logout</button>
 </div>
@@ -147,16 +126,13 @@ const auth=firebase.auth(),db=firebase.database(),R="uptimeAlert";
 let bootTs=null,intervalId=null;
 
 auth.onAuthStateChanged(u=>{
-if(u){document.getElementById("loginForm").style.display="none";document.getElementById("dashboard").style.display="block";loadFBSettings();startListeners()}
-else{document.getElementById("loginForm").style.display="block";document.getElementById("dashboard").style.display="none";if(intervalId){clearInterval(intervalId);intervalId=null}}
+  if(u){document.getElementById("loginForm").style.display="none";document.getElementById("dashboard").style.display="block";startListeners()}
+  else{document.getElementById("loginForm").style.display="block";document.getElementById("dashboard").style.display="none";if(intervalId){clearInterval(intervalId);intervalId=null}}
 });
 function doLogin(){const e=document.getElementById("loginEmail").value,p=document.getElementById("loginPass").value,er=document.getElementById("loginError");er.style.display="none";auth.signInWithEmailAndPassword(e,p).catch(x=>{er.textContent=x.message;er.style.display="block"})}
 function doRegister(){const e=document.getElementById("loginEmail").value,p=document.getElementById("loginPass").value,er=document.getElementById("loginError");er.style.display="none";auth.createUserWithEmailAndPassword(e,p).catch(x=>{er.textContent=x.message;er.style.display="block"})}
 function doResetPass(){const e=document.getElementById("loginEmail").value;if(!e){alert("Enter email first");return}auth.sendPasswordResetEmail(e).then(()=>alert("Reset email sent!"))}
 function doLogout(){auth.signOut();toggleSettings()}
-
-function loadFBSettings(){document.getElementById("fbApiKey").value=fc.apiKey||"";document.getElementById("fbDbUrl").value=fc.databaseURL||"";document.getElementById("fbProjectId").value=fc.projectId||""}
-function saveFirebaseConfig(){const c={apiKey:document.getElementById("fbApiKey").value,authDomain:document.getElementById("fbProjectId").value+".firebaseapp.com",databaseURL:document.getElementById("fbDbUrl").value,projectId:document.getElementById("fbProjectId").value,storageBucket:document.getElementById("fbProjectId").value+".firebasestorage.app",messagingSenderId:"225335243592",appId:fc.appId};localStorage.setItem("euCfg",JSON.stringify(c));location.reload()}
 function toggleSettings(){document.getElementById("settingsPanel").classList.toggle("open")}
 
 function startListeners(){
@@ -177,23 +153,15 @@ else{badge.textContent="OFFLINE";badge.className="badge badge-off"}
 });
 
 db.ref(R+"/config").once("value").then(snap=>{const c=snap.val();if(!c)return;
-sel("cfgAlertEnabled",c.alert_enabled);
-sel("cfgNotifyMethod",c.notification_method);
-setV("cfgFirstAlert",c.first_alert_minutes);
-setV("cfgEscalation",c.escalation_intervals);
-setV("cfgDeviceName",c.device_name);
-setV("cfgHeartbeat",c.heartbeat_interval);
-sel("cfgAlertOnBoot",c.alert_on_power_on);
-setV("cfgTgToken",c.telegram_bot_token);
-setV("cfgTgChatId",c.telegram_chat_id);
-setV("cfgWaSender",c.wa_sender);
-setV("cfgWaGroup",c.wa_group);
-setV("cfgWaToken",c.wa_token);
-setV("cfgWaUrl",c.wa_url);
-setV("cfgWifiSsid",c.wifi_ssid);
-setV("cfgWifiPass",c.wifi_pass);
-setV("cfgMsgTemplate",c.message_template);
-});
+  sel("cfgAlertEnabled",c.alert_enabled);
+  sel("cfgNotifyMethod",c.notification_method);
+  setV("cfgFirstAlert",c.first_alert_minutes);
+  setV("cfgEscalation",c.escalation_intervals);
+  setV("cfgDeviceName",c.device_name);
+  setV("cfgHeartbeat",c.heartbeat_interval);
+  sel("cfgAlertOnBoot",c.alert_on_power_on);
+  setV("cfgMsgTemplate",c.message_template);
+  });
 
 if(intervalId)clearInterval(intervalId);
 intervalId=setInterval(()=>{db.ref(R+"/status/uptime_seconds").once("value").then(s=>{document.getElementById("uptimeDisplay").textContent=fmtUptime(s.val()||0)})},5000);
@@ -209,17 +177,8 @@ function sel(id,v){const e=document.getElementById(id);if(e&&v!==undefined&&v!==
 function loadCfg(k){try{return JSON.parse(document.getElementById("cfgDeviceName").value)}catch(e){return null}}
 
 function saveAlertConfig(){
-const updates={alert_enabled:document.getElementById("cfgAlertEnabled").value==="true",notification_method:parseInt(document.getElementById("cfgNotifyMethod").value),first_alert_minutes:parseInt(document.getElementById("cfgFirstAlert").value),escalation_intervals:document.getElementById("cfgEscalation").value,device_name:document.getElementById("cfgDeviceName").value,heartbeat_interval:parseInt(document.getElementById("cfgHeartbeat").value),alert_on_power_on:document.getElementById("cfgAlertOnBoot").value==="true",message_template:document.getElementById("cfgMsgTemplate").value};
-db.ref(R+"/config").update(updates).then(()=>alert("Alert config saved!")).catch(e=>alert("Error: "+e.message));
-}
-function saveTelegramConfig(){
-db.ref(R+"/config").update({telegram_bot_token:document.getElementById("cfgTgToken").value,telegram_chat_id:document.getElementById("cfgTgChatId").value}).then(()=>alert("Telegram config saved!")).catch(e=>alert("Error: "+e.message));
-}
-function saveWhatsAppConfig(){
-db.ref(R+"/config").update({wa_sender:document.getElementById("cfgWaSender").value,wa_group:document.getElementById("cfgWaGroup").value,wa_token:document.getElementById("cfgWaToken").value,wa_url:document.getElementById("cfgWaUrl").value}).then(()=>alert("WhatsApp config saved!")).catch(e=>alert("Error: "+e.message));
-}
-function saveWifiConfig(){
-db.ref(R+"/config").update({wifi_ssid:document.getElementById("cfgWifiSsid").value,wifi_pass:document.getElementById("cfgWifiPass").value}).then(()=>alert("WiFi config saved! Device will reconnect.")).catch(e=>alert("Error: "+e.message));
+  const updates={alert_enabled:document.getElementById("cfgAlertEnabled").value==="true",notification_method:parseInt(document.getElementById("cfgNotifyMethod").value),first_alert_minutes:parseInt(document.getElementById("cfgFirstAlert").value),escalation_intervals:document.getElementById("cfgEscalation").value,device_name:document.getElementById("cfgDeviceName").value,heartbeat_interval:parseInt(document.getElementById("cfgHeartbeat").value),alert_on_power_on:document.getElementById("cfgAlertOnBoot").value==="true",message_template:document.getElementById("cfgMsgTemplate").value};
+  db.ref(R+"/config").update(updates).then(()=>alert("Alert config saved!")).catch(e=>alert("Error: "+e.message));
 }
 function restartDevice(){if(confirm("Restart the device?")){db.ref(R+"/config/restart_request").set(true).then(()=>alert("Restart sent!")).catch(e=>alert("Error: "+e.message))}}
 
