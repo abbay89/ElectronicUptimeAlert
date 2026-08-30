@@ -81,7 +81,7 @@ h1{margin:28px 0 4px;font-size:clamp(1.2rem,4vw,1.7rem);font-weight:700;text-ali
 <tr><td>Last Alert</td><td id="iLast">-</td></tr>
 <tr><td>Current Interval</td><td id="iInt">-</td></tr>
 </table></div>
-<div class="card"><h3>Alert Configuration</h3>
+<div class="card"><h3 style="display:flex;justify-content:space-between;align-items:center">Alert Configuration <span id="saveStatus" style="font-size:.75rem;color:#94a3b8;font-weight:400">auto-save</span></h3>
 <div class="crow">
 <div class="fg"><label>Alert Enabled</label><select id="cfgAlertEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></div>
 <div class="fg"><label>Notification Method</label><select id="cfgNotifyMethod"><option value="0">WhatsApp</option><option value="1">Telegram</option></select></div>
@@ -101,7 +101,6 @@ Alert #{alert_number}
 Time: {time}
 Next alert in: {next_alert} minutes</textarea>
 <p style="color:#94a3b8;font-size:.75rem;margin:4px 0 0">Placeholders: {device} {uptime} {alert_number} {time} {next_alert} {escalation} {first_alert}</p></div>
-<button class="btn btn-p" onclick="saveAlertConfig()">Save Alert Config</button></div>
 <div class="card"><h3>Device Actions</h3>
 <button class="btn btn-d" onclick="restartDevice()">Restart Device</button></div>
 <div class="card"><h3>Logs</h3>
@@ -138,6 +137,7 @@ function toggleSettings(){document.getElementById("settingsPanel").classList.tog
 
 function startListeners(){
 let cfgDeviceName="UptimeAlert";
+bindAutoSave();
 db.ref(R+"/config").once("value").then(snap=>{const c=snap.val();if(!c)return;
   cfgDeviceName=c.device_name||"UptimeAlert";
   document.getElementById("iName").textContent=cfgDeviceName;
@@ -179,15 +179,53 @@ if(k==="device_name"){cfgDeviceName=v||cfgDeviceName;document.getElementById("iN
 function setV(id,v){if(v!==undefined&&v!==null)document.getElementById(id).value=v}
 function sel(id,v){const e=document.getElementById(id);if(e&&v!==undefined&&v!==null)e.value=String(v)}
 
-function saveAlertConfig(){
-  const fA=document.getElementById("cfgFirstAlert").value,hB=document.getElementById("cfgHeartbeat").value;
-  const firstMin=parseInt(fA),hb=parseInt(hB);
-  if(isNaN(firstMin)||firstMin<1){alert("First Alert must be a valid number >= 1");return}
-  if(isNaN(hb)||hb<10){alert("Heartbeat must be a valid number >= 10");return}
-  const esc=document.getElementById("cfgEscalation").value.trim();
-  if(!/^\d+(,\s*\d+)*$/.test(esc)){alert("Escalation must be comma-separated numbers, e.g. 10,8,5,3,1");return}
-  const updates={alert_enabled:document.getElementById("cfgAlertEnabled").value==="true",notification_method:parseInt(document.getElementById("cfgNotifyMethod").value),first_alert_minutes:firstMin,escalation_intervals:esc,device_name:document.getElementById("cfgDeviceName").value.trim(),heartbeat_interval:hb,alert_on_power_on:document.getElementById("cfgAlertOnBoot").value==="true",message_template:document.getElementById("cfgMsgTemplate").value};
-  db.ref(R+"/config").update(updates).then(()=>alert("Alert config saved!")).catch(e=>alert("Error: "+e.message));
+let _saveState="idle",_saveTimer=null;
+function setSaveStatus(state){
+  const el=document.getElementById("saveStatus");
+  if(!el)return;
+  _saveState=state;
+  if(_saveTimer){clearTimeout(_saveTimer);_saveTimer=null}
+  const s={
+    idle:"<span style='color:#94a3b8'>auto-save</span>",
+    saving:"<span style='color:#94a3b8'>saving...</span>",
+    ok:"<span style='color:#22c55e'>saved &#10003;</span>",
+    err:"<span style='color:#ef4444'>not saved</span>"
+  }[state]||"<span style='color:#94a3b8'>auto-save</span>";
+  el.innerHTML=s;
+  if(state==="ok")_saveTimer=setTimeout(()=>{if(_saveState==="ok")setSaveStatus("idle")},2500);
+}
+function debounce(fn,ms){let t;return function(...a){clearTimeout(t);t=setTimeout(()=>fn.apply(this,a),ms)}}
+
+const FIELD_MAP={
+  cfgAlertEnabled:["alert_enabled",v=>v==="true"],
+  cfgNotifyMethod:["notification_method",v=>parseInt(v)],
+  cfgFirstAlert:["first_alert_minutes",v=>{v=parseInt(v);return isNaN(v)||v<1?null:v}],
+  cfgEscalation:["escalation_intervals",v=>{v=v.trim();return /^\d+(,\s*\d+)*$/.test(v)?v:null}],
+  cfgDeviceName:["device_name",v=>v.trim()],
+  cfgHeartbeat:["heartbeat_interval",v=>{v=parseInt(v);return isNaN(v)||v<10?null:v}],
+  cfgAlertOnBoot:["alert_on_power_on",v=>v==="true"],
+  cfgMsgTemplate:["message_template",v=>v]
+};
+
+function pushField(id){
+  const m=FIELD_MAP[id];if(!m)return;
+  const val=m[1](document.getElementById(id).value);
+  if(val===null){setSaveStatus("err");return}
+  setSaveStatus("saving");
+  const patch={};patch[m[0]]=val;
+  db.ref(R+"/config").update(patch)
+    .then(()=>setSaveStatus("ok"))
+    .catch(()=>setSaveStatus("err"));
+}
+const autosavePush=debounce(pushField,800);
+
+function bindAutoSave(){
+  ["cfgAlertEnabled","cfgNotifyMethod","cfgAlertOnBoot"].forEach(id=>{
+    const el=document.getElementById(id);if(el&&!el.dataset.auto){el.dataset.auto="1";el.addEventListener("change",()=>pushField(id))}
+  });
+  ["cfgFirstAlert","cfgEscalation","cfgDeviceName","cfgHeartbeat","cfgMsgTemplate"].forEach(id=>{
+    const el=document.getElementById(id);if(el&&!el.dataset.auto){el.dataset.auto="1";el.addEventListener("input",()=>autosavePush(id))}
+  });
 }
 function restartDevice(){if(confirm("Restart the device?")){db.ref(R+"/config/restart_request").set(true).then(()=>alert("Restart sent!")).catch(e=>alert("Error: "+e.message))}}
 
