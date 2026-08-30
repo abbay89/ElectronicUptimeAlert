@@ -120,7 +120,8 @@ Next alert in: {next_alert} minutes</textarea>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script>
 const DEF={apiKey:"AIzaSyCwgPIXYmb1X265MAMnblvhuLH-F397HuY",authDomain:"thiefdetectorapp.firebaseapp.com",databaseURL:"https://thiefdetectorapp-default-rtdb.asia-southeast1.firebasedatabase.app",projectId:"thiefdetectorapp",storageBucket:"thiefdetectorapp.firebasestorage.app",messagingSenderId:"225335243592",appId:"1:225335243592:web:4a88f2a9b58cf8fff2f97d"};
-let fc=JSON.parse(localStorage.getItem("euCfg")||"null")||DEF;
+let fc=DEF;
+try{fc=JSON.parse(localStorage.getItem("euCfg")||"null")||DEF}catch(e){fc=DEF}
 firebase.initializeApp(fc);
 const auth=firebase.auth(),db=firebase.database(),R="uptimeAlert";
 let bootTs=null,intervalId=null;
@@ -136,9 +137,23 @@ function doLogout(){auth.signOut();toggleSettings()}
 function toggleSettings(){document.getElementById("settingsPanel").classList.toggle("open")}
 
 function startListeners(){
+let cfgDeviceName="UptimeAlert";
+db.ref(R+"/config").once("value").then(snap=>{const c=snap.val();if(!c)return;
+  cfgDeviceName=c.device_name||"UptimeAlert";
+  document.getElementById("iName").textContent=cfgDeviceName;
+  sel("cfgAlertEnabled",c.alert_enabled);
+  sel("cfgNotifyMethod",c.notification_method);
+  setV("cfgFirstAlert",c.first_alert_minutes);
+  setV("cfgEscalation",c.escalation_intervals);
+  setV("cfgDeviceName",c.device_name);
+  setV("cfgHeartbeat",c.heartbeat_interval);
+  sel("cfgAlertOnBoot",c.alert_on_power_on);
+  setV("cfgMsgTemplate",c.message_template);
+}).catch(()=>{});
+
 db.ref(R+"/status").on("value",snap=>{const d=snap.val();if(!d)return;
 if(d.last_boot)bootTs=new Date(d.last_boot).getTime();
-document.getElementById("iName").textContent=loadCfg("device_name")||"UptimeAlert";
+document.getElementById("iName").textContent=cfgDeviceName;
 document.getElementById("iBoot").textContent=d.last_boot||"-";
 document.getElementById("iWifi").textContent=(d.wifi_ssid||"-")+(d.wifi_rssi?" ("+d.wifi_rssi+" dBm)":"");
 document.getElementById("iRssi").textContent=d.wifi_rssi?d.wifi_rssi+" dBm":"-";
@@ -152,32 +167,26 @@ if(d.is_online){badge.textContent="ONLINE";badge.className="badge badge-on"}
 else{badge.textContent="OFFLINE";badge.className="badge badge-off"}
 });
 
-db.ref(R+"/config").once("value").then(snap=>{const c=snap.val();if(!c)return;
-  sel("cfgAlertEnabled",c.alert_enabled);
-  sel("cfgNotifyMethod",c.notification_method);
-  setV("cfgFirstAlert",c.first_alert_minutes);
-  setV("cfgEscalation",c.escalation_intervals);
-  setV("cfgDeviceName",c.device_name);
-  setV("cfgHeartbeat",c.heartbeat_interval);
-  sel("cfgAlertOnBoot",c.alert_on_power_on);
-  setV("cfgMsgTemplate",c.message_template);
-  });
-
 if(intervalId)clearInterval(intervalId);
-intervalId=setInterval(()=>{db.ref(R+"/status/uptime_seconds").once("value").then(s=>{document.getElementById("uptimeDisplay").textContent=fmtUptime(s.val()||0)})},5000);
+intervalId=setInterval(()=>{db.ref(R+"/status/uptime_seconds").once("value").then(s=>{document.getElementById("uptimeDisplay").textContent=fmtUptime(s.val()||0)}).catch(()=>{})},5000);
 
 db.ref(R+"/config").on("child_changed",snap=>{
 const k=snap.key,v=snap.val();
-if(k==="device_name")document.getElementById("iName").textContent=v;
+if(k==="device_name"){cfgDeviceName=v||cfgDeviceName;document.getElementById("iName").textContent=cfgDeviceName}
 });
 }
 
 function setV(id,v){if(v!==undefined&&v!==null)document.getElementById(id).value=v}
 function sel(id,v){const e=document.getElementById(id);if(e&&v!==undefined&&v!==null)e.value=String(v)}
-function loadCfg(k){try{return JSON.parse(document.getElementById("cfgDeviceName").value)}catch(e){return null}}
 
 function saveAlertConfig(){
-  const updates={alert_enabled:document.getElementById("cfgAlertEnabled").value==="true",notification_method:parseInt(document.getElementById("cfgNotifyMethod").value),first_alert_minutes:parseInt(document.getElementById("cfgFirstAlert").value),escalation_intervals:document.getElementById("cfgEscalation").value,device_name:document.getElementById("cfgDeviceName").value,heartbeat_interval:parseInt(document.getElementById("cfgHeartbeat").value),alert_on_power_on:document.getElementById("cfgAlertOnBoot").value==="true",message_template:document.getElementById("cfgMsgTemplate").value};
+  const fA=document.getElementById("cfgFirstAlert").value,hB=document.getElementById("cfgHeartbeat").value;
+  const firstMin=parseInt(fA),hb=parseInt(hB);
+  if(isNaN(firstMin)||firstMin<1){alert("First Alert must be a valid number >= 1");return}
+  if(isNaN(hb)||hb<10){alert("Heartbeat must be a valid number >= 10");return}
+  const esc=document.getElementById("cfgEscalation").value.trim();
+  if(!/^\d+(,\s*\d+)*$/.test(esc)){alert("Escalation must be comma-separated numbers, e.g. 10,8,5,3,1");return}
+  const updates={alert_enabled:document.getElementById("cfgAlertEnabled").value==="true",notification_method:parseInt(document.getElementById("cfgNotifyMethod").value),first_alert_minutes:firstMin,escalation_intervals:esc,device_name:document.getElementById("cfgDeviceName").value.trim(),heartbeat_interval:hb,alert_on_power_on:document.getElementById("cfgAlertOnBoot").value==="true",message_template:document.getElementById("cfgMsgTemplate").value};
   db.ref(R+"/config").update(updates).then(()=>alert("Alert config saved!")).catch(e=>alert("Error: "+e.message));
 }
 function restartDevice(){if(confirm("Restart the device?")){db.ref(R+"/config/restart_request").set(true).then(()=>alert("Restart sent!")).catch(e=>alert("Error: "+e.message))}}
